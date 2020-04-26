@@ -8,12 +8,14 @@ import Control.Monad.Free
 data Console a
     = WriteLn String ( Console a )
     | ReadLn ( String -> Console a )
+    | Condition Bool ( Console a ) ( Console a )
     | Result a
 
 -- A direct interpreter for the DSL in the IO monad
 interpIO :: Console a -> IO a
 interpIO ( WriteLn s c ) = putStrLn s >> interpIO c
 interpIO ( ReadLn r ) = getLine >>= interpIO . r
+interpIO ( Condition c t e ) = if c then interpIO t else interpIO e
 interpIO ( Result v ) = pure v
 
 -- A simple program encoded in the DSL directly
@@ -22,9 +24,9 @@ program1 =
     WriteLn "What's your name?"
       ( ReadLn
         ( \name -> WriteLn ( "Hello " ++ name )
-          ( if length name > 2
-              then Result "this is a long name"
-              else Result "this is a short name"
+          ( Condition ( length name > 2 )
+              ( Result "this is a long name" )
+              ( Result "this is a short name" )
           )
         )
     )
@@ -39,6 +41,9 @@ writeLn s = WriteLn s ( Result () )
 readLine :: Console String
 readLine = ReadLn Result
 
+condition :: Bool -> Console Bool
+condition c = Condition c ( Result True ) ( Result False )
+
 result :: a -> Console a
 result = Result
 
@@ -46,6 +51,7 @@ result = Result
 instance Functor Console where
     fmap f ( WriteLn s c ) = WriteLn s ( fmap f c )
     fmap f ( ReadLn r ) = ReadLn ( fmap f . r )
+    fmap f ( Condition c t e ) = Condition c ( fmap f t ) ( fmap f e )
     fmap f ( Result x ) = Result ( f x )
 
 instance Applicative Console where
@@ -55,6 +61,7 @@ instance Applicative Console where
 instance Monad Console where
     ( WriteLn s c ) >>= f = WriteLn s ( c >>= f )
     ( ReadLn r ) >>= f = ReadLn ( r >=> f )
+    ( Condition c t e ) >>= f = Condition c ( t >>= f ) ( e >>= f )
     ( Result x ) >>= f = f x
 
 -- Now the DSL can be used in monadic style
@@ -63,9 +70,11 @@ program2 = do
     writeLn "Say your name please..."
     name <- readLine
     writeLn ( "Hello again " ++ name )
-    if length name > 2
-        then result "Very long indeed"
-        else result "No so long"
+    c <- condition ( length name > 2 )
+    if c
+        then writeLn "This is a long name"
+        else writeLn "This is a short name"
+    result "Bye!"
 
 interp2 :: IO String
 interp2 = interpIO program2
@@ -76,9 +85,10 @@ program3 =
     writeLn "Name:" >>
     readLine >>= \name ->
     writeLn ( "Oi mate " ++ name ) >>
-    if length name > 2
-        then result "you have a long name"
-        else result "you have a short name"
+    condition ( length name > 2 ) >>=
+        \c -> if c
+            then result "you have a long name"
+            else result "you have a short name"
 
 interp3 :: IO String
 interp3 = interpIO program3
@@ -92,6 +102,7 @@ interp3 = interpIO program3
 data ConsoleF a
     = WriteLnF String a
     | ReadLnF ( String -> a )
+    | ConditionF Bool a a
     | ResultF a
 
 -- Turn the DSL into a functor. Alternatively we could use the DeriveFunctor
@@ -99,6 +110,7 @@ data ConsoleF a
 instance Functor ConsoleF where
     fmap f ( WriteLnF s c ) = WriteLnF s ( f c )
     fmap f ( ReadLnF r ) = ReadLnF ( f . r )
+    fmap f ( ConditionF c t e ) = ConditionF c ( f t ) ( f e )
     fmap f ( ResultF x ) = ResultF ( f x )
 
 -- The free monad for our DSL
@@ -110,6 +122,9 @@ writeLnFM s = liftF $ WriteLnF s ()
 
 readLineFM :: ConsoleFM String
 readLineFM = liftF $ ReadLnF id
+
+conditionFM :: Bool -> ConsoleFM Bool
+conditionFM c = liftF $ ConditionF c True False
 
 resultFM :: a -> ConsoleFM a
 resultFM x = liftF $ ResultF x
@@ -124,9 +139,10 @@ interpIOF :: ConsoleFM a -> IO a
 interpIOF = foldFree alg
     where
         alg :: ConsoleF x -> IO x
-        alg (WriteLnF s c) = c <$ putStrLn s
-        alg (ReadLnF r) = r <$> getLine
-        alg (ResultF x) = pure x
+        alg ( WriteLnF s c ) = c <$ putStrLn s
+        alg ( ReadLnF r ) = r <$> getLine
+        alg ( ConditionF c t e ) = if c then pure t else pure e
+        alg ( ResultF x ) = pure x
 
 -- Now we can use the new DSL in monadic style
 program4 :: ConsoleFM Int
@@ -134,6 +150,9 @@ program4 = do
     writeLnFM "Say something"
     name <- readLineFM
     writeLnFM ( "You said: " ++ name )
+    if length name > 2
+        then writeLnFM "A long name again"
+        else writeLnFM "A short name again"
     resultFM ( length name )
 
 interp4 :: IO Int
