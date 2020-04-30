@@ -133,7 +133,7 @@ resultFM x = liftF $ ResultF x
 -- liftF :: Functor f => f a -> Free f a
 -- liftF = Free . fmap return
 
--- The almost free interpreter. Note how we only need to define the semantics
+-- The free interpreter. Note how we only need to define the semantics
 -- for the base cases. The recursive calls are taken care of by the free monad.
 interpIOF :: ConsoleFM a -> IO a
 interpIOF = foldFree alg
